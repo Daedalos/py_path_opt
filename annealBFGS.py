@@ -1,8 +1,26 @@
 import numpy as np
-import xalglib
-import adolc
-import time
+import xalglib, adolc
+import time, sys
 from scipy.integrate import odeint
+
+# Problem definition
+N = 300
+D = 5
+dt = 0.01
+NBETA = 30
+measIdx = [0]
+taus = [30]
+
+modelname = 'lorenz96'
+mapname = 'rk2'
+outfile = 'test_BFGS.txt'
+generate_data = False
+init_path_file = 'initpaths.txt' #if random will generate initpaths.txt, else loads file
+
+epsg = 1e-8
+epsf = 1e-8
+epsx = 1e-8
+maxits = 10000
 
 def lorenz96(x, t):
     D = len(x)
@@ -12,18 +30,18 @@ def lorenz96(x, t):
     
     return np.array(dxdt)
 
+# Just a convenience to generate data. 
+def gen_data(dt, skip=0, data_initial=0, model=lorenz96):
 
-def gen_data(dt, T_final, skip=0):
-
+    T_final = (skip+110000)*dt
     T_total = np.arange(0,T_final,dt)
-    #data_initial = randn(5+1,1)
-    #data_initial = [0.80, 0.95, 0.71, 0.24, 0.63,-1, 2, 1, -2.2, 0.3];
-    #data_initial[-1] = 8.17
-    data_initial = [ -2.33211 ,  -5.508487 , -9.208057, -10.98852 ,   6.165695]
-    #[0.80, 0.95, 0.71, 0.24, 0.63];
+    #data_initial = [ -2.33211 ,  -5.508487 , -9.208057, -10.98852 ,   6.165695]
+    if data_initial ==0:
+        data_initial = 10.0*np.random.rand(D)
 
-    Y = odeint(lorenz96,data_initial,T_total)
-    Y = Y[skip:skip+1000,:]
+    #[0.80, 0.95, 0.71, 0.24, 0.63];
+    Y = odeint(model,data_initial,T_total)
+    Y = Y[skip:skip+100001,:]
     param = 8.17*np.ones(len(Y))
 
 
@@ -38,12 +56,14 @@ def gen_data(dt, T_final, skip=0):
     Ynoise = Y + noise
     np.savetxt("dataN_D{0}_dt{1}.txt".format(len(data_initial),dt),Ynoise)
 
+#maps each row in an array x forward to an array f(x)
 def array_map(x):
     f = np.zeros_like(x)
     for i in range(x.shape[0]):
         f[i,:] = map(x[i,:],model,dt,i*dt)
     return f
 
+# Evaluates cost function, per variable
 def action(x, beta):
 #    x = np.array(x)
     x = np.reshape(x,(N,D))
@@ -55,7 +75,7 @@ def action(x, beta):
         raise "x is wrong dims!"
 
     # Rm term
-    dy = x[:,measIdx]-y[:,measIdx]
+    dy = x[:,measIdx]-y
     action = np.sum(0.5*Rm*(dy)**2)
     
     #Rf term
@@ -73,12 +93,12 @@ def action(x, beta):
         else:
             for i in range(taus[count-1],tau):
                 f1 = array_map(f1)
-        dytd = y[tau:,measIdx]-f1[:-tau,measIdx]   
+        dytd = y[tau:,:]-f1[:-tau,measIdx]   
         #        dxtd = x[tau:,measIdx]-f1[:-tau,measIdx]   
         #   + np.sum(0.5*Rf*(dxtd)**2)
         action += np.sum(0.5*Rtd*(dytd)**2) 
 
-    return action
+    return action/nvar
    
 
 def rk2(x,f,dt,t):
@@ -93,6 +113,7 @@ def rk4(x,f,dt,t):
     k4 = dt*f(x+k3, t+dt)
     return x + 1.0/6.0*(k1+2.0*k2+2.0*k3+k4)
 
+# ALGLIB bfgs cost func. returns f(x), passes grad_f(x) by reference
 def alglib_func(x,grad,p):
     grad[:] = adolc.gradient(adolcID,x)    
     return  adolc.function(adolcID,x)
@@ -101,22 +122,18 @@ def alglib_func(x,grad,p):
 def run(N,D,dt,beta,x0):
     
     if x0=='start':
-        #init = 20.0*np.random.random_sample((N,D))-10.0
-        #np.savetxt('initpaths.txt',init)        
-        init = np.loadtxt('initpaths.txt')       
+        if init_path_file == 'random':
+            init = 20.0*np.random.random_sample((N,D))-10.0
+            np.savetxt('initpaths.txt',init)        
+        else:
+            init = np.loadtxt(init_path_file)       
     else:
         init = x0.reshape(N,D)
 
     #init = np.loadtxt("data_D{0}_dt{1}_noP.txt".format(D,dt))[:N,:]
     
     if init.shape != (N,D):
-        raise "x is wrong dims!"
-  
-    epsg = 1e-8
-    epsf = 1e-8
-    epsx = 1e-8
-    maxits = 10000
-    
+        raise "x is wrong dims!"  
 
     ### Use ADOL-C to generate trace, used for derivatives and
     ### evaluations
@@ -129,8 +146,8 @@ def run(N,D,dt,beta,x0):
     adolc.dependent(af)
     adolc.trace_off()
 
-    print "taped =", time.time()-start,"s"
-    options = [0,0,0,0]
+    
+    print "beta = ", beta, " taped"
 
     #Test Gradient numerically 
     #    flat = init.flatten()
@@ -153,26 +170,25 @@ def run(N,D,dt,beta,x0):
     print "Action = ", action(final,beta)
     return rep.iterationscount, action(final,beta), final
     
-if __name__ == "__main__" :
+if __name__ == "__main__" :    
+    
+    Ntd = len(taus)
+    nvar = D*N
+    model = eval(modelname)
+    map = eval(mapname)
 
-    N = 150
-    D = 5
-    dt = 0.01
-    NBETA = 30
+    if generate_data:
+        gen_data(dt,1000,data_initial=0,model=model)
 
     ytmp = np.loadtxt("dataN_D{0}_dt{1}_noP.txt".format(D,dt))
-    # set unmeasured states to NaN, to avoid accidentally accessing
-    # them
-    measIdx = [0]
     y = ytmp[:N,measIdx]
 
-    model = lorenz96
-    map = rk4
+    if len(sys.argv)>1:
+        adolcID = sys.argv[1]
+    else:
+        adolcID = 0
 
-    taus = [10,15,20]
-    Ntd = len(taus)
-    adolcID = 0
-    
+  
     store = np.zeros((NBETA,N*D+3))
     x0 = 'start'
     for beta in range(NBETA):
@@ -180,7 +196,7 @@ if __name__ == "__main__" :
         store[beta,1], store[beta,2], store[beta,3:] = run(N,D,dt,beta,x0)
         x0 = store[beta,3:]
     
-    np.savetxt('test_annealRK4.txt', store)
+    np.savetxt(outfile, store)
                                
     
     

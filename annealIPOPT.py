@@ -14,13 +14,13 @@ import sys
 #python anneal.py 2
 
 
-N = 10 # Number of Time Steps
-D = 5 # Dimensions
+N = 300 # Number of Time Steps
+D = 3 # Dimensions
 dt = 0.01 # Timestep size
 NBETA = 30 # Number of anneal steps to use. beta = {0...NBETA}
 
 measIdx = [0]  #Indices of measured variables
-taus = [1] # Time Delays
+taus = [] # Time Delays
 
 # Set low/ upper bnd for each state var in IPOPT
 lowbnd = np.array([-15.,-15.,-15.,-15.,-15.])
@@ -30,17 +30,17 @@ upbnd = np.array([15.,15.,15.,15.,15.])
 g_L = np.array([])
 g_U = np.array([])
 
-modelname = 'lorenz96' # Name of differential Model function to use
-mapname = 'rk4' # Name of Discretization function to use
+modelname = 'colpitts' # Name of differential Model function to use
+mapname = 'rk2' # Name of Discretization function to use
 
 #File of initial paths. If initfile =='random', will generate random
 #NxD path and save to initpaths.txt
-initfile = 'initpaths.txt' 
+initfile = 'random' 
 savefile = 'test_anneal.txt' #Filename ot save output
 
 # Optimization Options
 epsf = 1e-6 # Function Tolerance
-maxits = 10000 #Max Iterations
+maxits = 100000 #Max Iterations
 epsg = 1e-6 # Constraint Tol
 linear_solver = 'ma97'
 #epsx = 1e-8 # Step Size Tolerance
@@ -55,6 +55,13 @@ def lorenz96(x, t):
     for i in range(D):
         dxdt.append(x[np.mod(i-1,D)]*(x[np.mod(i+1,D)]-x[np.mod(i-2,D)]) - x[i] + 8.17)    
     return np.array(dxdt)
+
+def colpitts(x,t):
+    dx = x[1]
+    dy =-5.0*(x[0]+x[2])-2.0*x[1]
+    dz = 2.8*(x[1]+1-np.exp(-x[0]))
+    return np.array([dx,dy,dz])
+ 
 
 # low, high should be D-dim vectors, with each entry corresponding to
 # the lower/upper bounds of a state variable over the entire path.
@@ -85,7 +92,7 @@ def action(x, beta):
     
     #Rf term
     f1 = array_map(x)
-#    import ipdb; ipdb.set_trace()
+
     action = action + np.sum(0.5*Rf*(x[1:,:]-f1[:-1,:])**2)
     #action = np.hstack((action,0.5*Rf*(x[1:,:]-f1[:-1,:])**2))
     
@@ -115,9 +122,14 @@ def action(x, beta):
     #action = np.hstack((action,0.5*Rtd*(dytd)**2))
 
 
-    return action
+    return action/nvar
 
 def actTDtest(x,beta):
+    x = x.reshape((N,D))
+    Rf = 0.01*(2**beta)
+    Rm = 4.0
+    Rtd = 1.0/(1.0/Rf+1.0/Rm)
+
     f1 = array_map(x)
     action = 0
     for count in range(Ntd):
@@ -190,6 +202,7 @@ class Eval_h:
     def __init__(self, x0, lagrange, obj_factor):
 
         x = np.hstack([x0,lagrange,obj_factor])
+        #x = x0
         options = np.array([1,0],dtype=int)
         result = adolc.colpack.sparse_hess_no_repeat(lID,x,options)
         print 'hess initialized'      
@@ -244,14 +257,15 @@ def run(x0, eval_jac_g, eval_h):
     x_L, x_U = set_x_bounds(lowbnd, upbnd)
 
     start = time.time()
-
-    #nlp = pyipopt.create(nvar, x_L, x_U, ncon, g_L, g_U, eval_jac_g.nnz, eval_h.nnz, eval_f_adolc, eval_grad_f, eval_g_adolc, eval_jac_g, eval_h)
+    print eval_h.nnz
     nlp = pyipopt.create(nvar, x_L, x_U, ncon, g_L, g_U, eval_jac_g.nnz, eval_h.nnz, eval_f_adolc, eval_grad_f, eval_g_adolc, eval_jac_g, eval_h)
+    #nlp = pyipopt.create(nvar, x_L, x_U, ncon, g_L, g_U, eval_jac_g.nnz, 365, eval_f_adolc, eval_grad_f, eval_g_adolc, eval_jac_g)
 
 
     nlp.int_option('max_iter', maxits)
     nlp.num_option('constr_viol_tol', epsg)
     nlp.num_option('tol', epsf)
+    nlp.num_option('acceptable_tol', 1e-3)
     nlp.str_option('linear_solver', linear_solver)
     nlp.str_option('mu_strategy', 'adaptive')
     nlp.num_option('bound_relax_factor', 0)
@@ -259,7 +273,7 @@ def run(x0, eval_jac_g, eval_h):
 
     results = nlp.solve(x0)
 
-
+    import ipdb; ipdb.set_trace()
     print "optimized: ", time.time()-start, "s"
     print "Exit flag = ", results[5]
     print "Action = ", results[4]
@@ -273,8 +287,8 @@ def tape(fID, gID, lID, x0, beta):
     adolc.trace_on(fID)
     ax = adolc.adouble(x0)
     adolc.independent(ax)
-    #    ay = action(ax, beta)
-    ay = actTDtest(ax, beta)
+    ay = action(ax, beta)
+    #ay = actTDtest(ax, beta)
     adolc.dependent(ay)
     adolc.trace_off()
 
@@ -307,11 +321,13 @@ def tape(fID, gID, lID, x0, beta):
     eval_jac_g_adolc = Eval_jac_g(x0)
 
     eval_h_adolc = Eval_h(x0, np.ones(ncon), 1.)
+    #hesstest = adolc.hessian(lID, np.hstack([x0,np.array([]),1.]))
+
     t2 = time.time()
     print "Colpack time = ", t2-t1
-    import ipdb; ipdb.set_trace()
 
-    #hesstest = adolc.hessian(lID, np.hstack([x0,np.array([]),1.]))
+
+    #
 
 
 
@@ -356,7 +372,7 @@ if __name__ == "__main__" :
 
 
     store = np.zeros((NBETA,N*D+2))
-    for beta in range(NBETA):
+    for beta in [20.]: #range(NBETA):
         store[beta,0] = beta
         t0 = time.time()
         eval_jac_g, eval_h = tape(fID, gID, lID,x0,beta)
@@ -370,17 +386,18 @@ if __name__ == "__main__" :
     
     
 # Just a convenience to generate data. 
-def gen_data(dt, T_final, skip=0):
+def gen_data(dt, skip=0, data_initial=0, model=lorenz96):
 
+    T_final = (skip+110000)*dt
     T_total = np.arange(0,T_final,dt)
-    #data_initial = randn(5+1,1)
-    #data_initial = [0.80, 0.95, 0.71, 0.24, 0.63,-1, 2, 1, -2.2, 0.3];
-    #data_initial[-1] = 8.17
-    data_initial = [ -2.33211 ,  -5.508487 , -9.208057, -10.98852 ,   6.165695]
+    #data_initial = [ -2.33211 ,  -5.508487 , -9.208057, -10.98852 ,   6.165695]
+    if data_initial ==0:
+        data_initial = 10.0*np.random.rand(D)
+
     #[0.80, 0.95, 0.71, 0.24, 0.63];
 
-    Y = odeint(lorenz96,data_initial,T_total)
-    Y = Y[skip:skip+1000,:]
+    Y = odeint(model,data_initial,T_total)
+    Y = Y[skip:skip+100001,:]
     param = 8.17*np.ones(len(Y))
 
 
