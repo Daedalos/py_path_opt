@@ -1,6 +1,7 @@
 import numpy as np
 import pyipopt, adolc, time
 from scipy.integrate import odeint
+import scipy.sparse as sps
 import sys
 
 # Different Adolc tapes will write different files. If running
@@ -14,7 +15,7 @@ import sys
 #python anneal.py 2
 
 
-N = 300 # Number of Time Steps
+N = 100 # Number of Time Steps
 D = 3 # Dimensions
 dt = 0.01 # Timestep size
 NBETA = 30 # Number of anneal steps to use. beta = {0...NBETA}
@@ -134,17 +135,17 @@ def actTDtest(x,beta):
     action = 0
     for count in range(Ntd):
         tau = taus[count]
-    if count==0:
-        for i in range(1,tau):
-            f1 = array_map(f1)
-        else:
-            for i in range(taus[count-1],tau):
+        if count==0:
+            for i in range(1,tau):
                 f1 = array_map(f1)
-        dytd = y[tau:,:]-f1[:-tau,measIdx]   
-        #dxtd = x[tau:,measIdx]-f1[:-tau,measIdx]   
-        #+ np.sum(0.5*Rf*(dxtd)**2)
-        action = action + np.sum(0.5*Rtd*(dytd)**2) 
-    return action
+            else:
+                for i in range(taus[count-1],tau):
+                    f1 = array_map(f1)
+            dytd = y[tau:,:]-f1[:-tau,measIdx]   
+                    #dxtd = x[tau:,measIdx]-f1[:-tau,measIdx]   
+                    #+ np.sum(0.5*Rf*(dxtd)**2)
+            action = action + np.sum(0.5*Rtd*(dytd)**2) 
+    return action/nvar
 
 # IPOPT constraint function. Each term in the array should == 0. Commented
 # example, because I am not using constraints. Could be modified to
@@ -198,6 +199,38 @@ class Eval_jac_g:
 
 # Evaluates Hessian of Lagranian (Lag. combines the Obj func and the
 # constraints into one big ol' matrix). Should be very sparse
+class Eval_h_dense:
+    def __init__(self, x0, lagrange, obj_factor):    
+        x = np.hstack([x0,lagrange,obj_factor])
+        result = adolc.hessian(lID,x)
+        print 'hess initialized'     
+        result1 = result[:nvar,:nvar]
+        result = None
+        result = sps.triu(result1,format='coo')
+        result1 = None
+            
+        self.rind  = result.row
+        self.cind = result.col
+        self.values = result.data
+        
+        # Only keep hess values w/ respect to x, not lagrange/obj_factor
+     
+        self.nnz = result.nnz
+        
+    def __call__(self, x0, lagrange, obj_factor, flag, user_data = None):
+
+        if flag:
+            return (self.rind, self.cind)
+        else:
+            x = np.hstack([x0,lagrange,obj_factor])
+            result = adolc.hessian(lID,x)
+            result1 = result[:nvar,:nvar]
+            result = None
+            result = sps.triu(result1,format='coo')
+
+            return result.data
+
+
 class Eval_h:    
     def __init__(self, x0, lagrange, obj_factor):
 
@@ -257,6 +290,7 @@ def run(x0, eval_jac_g, eval_h):
     x_L, x_U = set_x_bounds(lowbnd, upbnd)
 
     start = time.time()
+
     print eval_h.nnz
     nlp = pyipopt.create(nvar, x_L, x_U, ncon, g_L, g_U, eval_jac_g.nnz, eval_h.nnz, eval_f_adolc, eval_grad_f, eval_g_adolc, eval_jac_g, eval_h)
     #nlp = pyipopt.create(nvar, x_L, x_U, ncon, g_L, g_U, eval_jac_g.nnz, 365, eval_f_adolc, eval_grad_f, eval_g_adolc, eval_jac_g)
@@ -273,7 +307,7 @@ def run(x0, eval_jac_g, eval_h):
 
     results = nlp.solve(x0)
 
-    import ipdb; ipdb.set_trace()
+
     print "optimized: ", time.time()-start, "s"
     print "Exit flag = ", results[5]
     print "Action = ", results[4]
@@ -320,11 +354,10 @@ def tape(fID, gID, lID, x0, beta):
     
     eval_jac_g_adolc = Eval_jac_g(x0)
 
-    eval_h_adolc = Eval_h(x0, np.ones(ncon), 1.)
-    #hesstest = adolc.hessian(lID, np.hstack([x0,np.array([]),1.]))
-
+    #eval_h_adolc = Eval_h(x0, np.ones(ncon), 1.)
+    eval_h_adolc = Eval_h_dense(x0, np.ones(ncon), 1.)
     t2 = time.time()
-    print "Colpack time = ", t2-t1
+    print "Hess time = ", t2-t1
 
 
     #
