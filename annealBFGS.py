@@ -9,7 +9,7 @@ D = 5
 dt = 0.01
 NBETA = 30
 measIdx = [0]
-taus = [20]
+taus = []
 
 modelname = 'lorenz96'
 mapname = 'rk2'
@@ -22,6 +22,7 @@ epsf = 1e-8
 epsx = 1e-8
 maxits = 10000
 
+
 def lorenz96(x, t):
     D = len(x)
     dxdt = []
@@ -29,6 +30,32 @@ def lorenz96(x, t):
         dxdt.append(x[np.mod(i-1,D)]*(x[np.mod(i+1,D)]-x[np.mod(i-2,D)]) - x[i] + 8.17)
     
     return np.array(dxdt)
+
+
+def init():
+
+    # Probably bad form to define global variables, but easier
+    global Ntd, nvar, model, fmap, adolcID, y, store, x0
+
+    Ntd = len(taus)
+    nvar = D*N
+    model = eval(modelname)
+    fmap = eval(mapname)
+
+    if generate_data:
+        gen_data(dt,1000,data_initial=0,model=model)
+
+    ytmp = np.loadtxt("dataN_D{0}_dt{1}_noP.txt".format(D,dt))
+    y = ytmp[:N,measIdx]
+
+    if len(sys.argv)>1:
+        adolcID = sys.argv[1]
+    else:
+        adolcID = 0 
+
+    store = np.zeros((NBETA,N*D+3))
+    x0 = 'start'
+
 
 # Just a convenience to generate data. 
 def gen_data(dt, skip=0, data_initial=0, model=lorenz96):
@@ -60,7 +87,7 @@ def gen_data(dt, skip=0, data_initial=0, model=lorenz96):
 def array_map(x):
     f = np.zeros_like(x)
     for i in range(x.shape[0]):
-        f[i,:] = map(x[i,:],model,dt,i*dt)
+        f[i,:] = fmap(x[i,:],model,dt,i*dt)
     return f
 
 # Evaluates cost function, per variable
@@ -120,15 +147,8 @@ def alglib_func(x,grad,p):
 
 
 def optimize(N,D,dt,beta,x0):
-    
-    if x0=='start':
-        if init_path_file == 'random':
-            init = 20.0*np.random.random_sample((N,D))-10.0
-            np.savetxt('initpaths.txt',init)        
-        else:
-            init = np.loadtxt(init_path_file)       
-    else:
-        init = x0.reshape(N,D)
+
+    init = x0.reshape(N,D)
 
     #init = np.loadtxt("data_D{0}_dt{1}_noP.txt".format(D,dt))[:N,:]
     
@@ -170,27 +190,16 @@ def optimize(N,D,dt,beta,x0):
     print "Action = ", action(final,beta)
     return rep.terminationtype, action(final,beta), final
 
-def init():
-    Ntd = len(taus)
-    nvar = D*N
-    model = eval(modelname)
-    map = eval(mapname)
-
-    if generate_data:
-        gen_data(dt,1000,data_initial=0,model=model)
-
-    ytmp = np.loadtxt("dataN_D{0}_dt{1}_noP.txt".format(D,dt))
-    y = ytmp[:N,measIdx]
-
-    if len(sys.argv)>1:
-        adolcID = sys.argv[1]
-    else:
-        adolcID = 0 
-
-    store = np.zeros((NBETA,N*D+3))
-    x0 = 'start'
-
 def run():
+    
+
+    if init_path_file == 'random':
+        init = 20.0*np.random.random_sample((N,D))-10.0
+        np.savetxt('initpaths.txt',init)        
+    else:
+        init = np.loadtxt(init_path_file)       
+    
+    x0 = init.flatten()
     for beta in range(NBETA):
         store[beta,0] = beta
         store[beta,1], store[beta,2], store[beta,3:] = optimize(N,D,dt,beta,x0)
@@ -201,7 +210,6 @@ def run():
     
 if __name__ == "__main__" :    
     init()
-    run()
-    
+    run()    
     
     
