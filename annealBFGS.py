@@ -9,7 +9,7 @@ D = 5
 dt = 0.01
 NBETA = 30
 measIdx = [0]
-taus = [30]
+taus = [20]
 
 modelname = 'lorenz96'
 mapname = 'rk2'
@@ -168,7 +168,7 @@ def run(N,D,dt,beta,x0):
     print "optimized: ", time.time()-start, "s"
     print "Exit flag = ", rep.terminationtype, rep.iterationscount
     print "Action = ", action(final,beta)
-    return rep.iterationscount, action(final,beta), final
+    return rep.terminationtype, action(final,beta), final
     
 if __name__ == "__main__" :    
     
