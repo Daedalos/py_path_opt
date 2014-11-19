@@ -119,7 +119,7 @@ def alglib_func(x,grad,p):
     return  adolc.function(adolcID,x)
 
 
-def run(N,D,dt,beta,x0):
+def optimize(N,D,dt,beta,x0):
     
     if x0=='start':
         if init_path_file == 'random':
@@ -169,9 +169,8 @@ def run(N,D,dt,beta,x0):
     print "Exit flag = ", rep.terminationtype, rep.iterationscount
     print "Action = ", action(final,beta)
     return rep.terminationtype, action(final,beta), final
-    
-if __name__ == "__main__" :    
-    
+
+def init():
     Ntd = len(taus)
     nvar = D*N
     model = eval(modelname)
@@ -186,18 +185,23 @@ if __name__ == "__main__" :
     if len(sys.argv)>1:
         adolcID = sys.argv[1]
     else:
-        adolcID = 0
+        adolcID = 0 
 
-  
     store = np.zeros((NBETA,N*D+3))
     x0 = 'start'
+
+def run():
     for beta in range(NBETA):
         store[beta,0] = beta
-        store[beta,1], store[beta,2], store[beta,3:] = run(N,D,dt,beta,x0)
+        store[beta,1], store[beta,2], store[beta,3:] = optimize(N,D,dt,beta,x0)
         x0 = store[beta,3:]
     
     np.savetxt(outfile, store)
-                               
+    
+    
+if __name__ == "__main__" :    
+    init()
+    run()
     
     
     
